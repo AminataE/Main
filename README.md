@@ -1,2 +1,2 @@
 # Main
-This is a repository of all my public academic projects
+This is a repository of my publicly available academic projects
