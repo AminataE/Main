@@ -1,0 +1,922 @@
+---
+title: "Illustration de l'algorithme dynamique et du PELT sur données réelles et simulations"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+Les différentes fonctions qui seront utilisées se trouvent ci-dessous :
+```{r  echo=FALSE}
+setwd("/Users/aminatandiaye")
+load("CET.RData")
+graine<-19
+set.seed(graine)
+#programmation dynamique
+# y est une série, C est une fonction de cout, K est le nombre de points de rupture
+opti_seg <- function(y, C, K){
+  L <- length(y)
+  Q0 <- matrix(0, ncol = L, nrow = L)
+  for (j in 1:L){
+    for (i in 1:j){
+      Q0[i,j]<-C(y,i,j)
+    }
+  }
+  Q <- matrix(0,ncol = L, nrow = K+1)
+  Q[1,] <- Q0[1,]
+  tau <- matrix(0,ncol = K, nrow = K)
+  v_tau <- (1:(L-1))
+  for (k in 1:K){
+    for (j in 2:L){
+      v <- 1:(j-1)
+      Q[(k+1),j] <- min(Q[k,v]+Q0[(v+1),j])
+      tau[k,1] <- which.min( Q[k,v_tau] + Q0[(v_tau+1),L] )
+    }
+    if (k>=2){
+      for (i in 2:k){
+        tau[k,i] <- which.min(Q[(k-i+1),v_tau] + Q0[(v_tau+1),tau[k,(i-1)]])
+      }
+    }
+  }
+  return(list("tau"=tau,"couts_finaux"=Q[,L][-1],"Q"=Q,"Q0"=Q0))
+}
+
+opti_seg_ar1 <- function(y, C, K){
+  L <- length(y)
+  Q0 <- matrix(0, ncol = L-1, nrow = L-1)
+  for (j in 1:(L-1)){
+    for (i in 1:j){
+      Q0[i,j]<-C(y,i+1,j+1)
+    }
+  }
+  Q <- matrix(0,ncol = L-1, nrow = K+1)
+  Q[1,] <- Q0[1,]
+  tau <- matrix(0,ncol = K, nrow = K)
+  v_tau <- (2:(L-1))
+  for (k in 1:K){
+    for (j in 2:(L-1)){
+      v <- 2:j
+      Q[k+1,j] <- min(Q[k,v-1]+Q0[v,j])
+      tau[k,1] <- which.min( Q[k,v_tau-1] + Q0[v_tau,L-1] )
+    }
+    if (k>=2){
+      for (i in 2:k){
+        tau[k,i] <- which.min( Q[(k-i+1),v_tau-1] + Q0[(v_tau),tau[k,(i-1)]-1] )
+      }
+    }
+  }
+  return(list("tau"=tau,"couts_finaux"=Q[-1,(L-1)],"Q"=Q,"Q0"=Q0))
+}
+
+#PELT
+
+# y est  une série, min.seg.len est la distance minimale que l'on impose entre 2 points de rupture, pen est la pénalité, cout est une fonction de cout
+pelt <- function(y, min.seg.len, pen, cout)
+{
+  n <- length(y)
+  FF <- rep(0, n)
+  pt_rupt  <- rep(0, n)  
+  pt_rupt[1:(2*min.seg.len)] <- 0
+  FF[1] <- -pen
+  FF[2:(2*min.seg.len)] <-sapply(2:(2*min.seg.len),function(x){cout(y,1,x)})
+  R <- c(1,min.seg.len)
+  for (s in (2*min.seg.len):n){
+    R.inter <- R[R<=(s-min.seg.len)]
+    cout.inter <-sapply(R.inter,function(x){cout(y,x,s)})
+    templike <- FF[R.inter]+ cout.inter + pen
+    FF[s] <- min(templike)
+    pt_rupt[s] <- R[which.min(templike)]
+    R <- c(R[templike-pen < FF[s]], s)
+  }
+  i <- n
+  pt_rup_final <- c()
+  while(i>1){
+    if (pt_rupt[i]>1){
+      pt_rup_final <- c(pt_rup_final, pt_rupt[i])
+    }
+    i <- pt_rupt[i]-1
+  }
+  return(pt_rup_final)
+}
+
+
+pelt_AR <- function(y, min.seg.len, pen, cout)
+  
+{
+  n <- length(y)
+  FF <- rep(0, n)
+  pt_rupt  <- rep(0, n)  
+  pt_rupt[1:(2*min.seg.len)] <- 0
+  FF[1] <- -pen
+  FF[2:(2*min.seg.len)] <-sapply(2:(2*min.seg.len),function(x){cout(y,2,x)})
+  R <- c(2,min.seg.len)
+  for (s in (2*min.seg.len):n){
+    R.inter <- R[R<=(s-min.seg.len)]
+    cout.inter <-sapply(R.inter,function(x){cout(y,x,s)})
+    templike <- FF[R.inter]+ cout.inter + pen
+    FF[s] <- min(templike)
+    pt_rupt[s] <- R[which.min(templike)]
+    R <- c(R[templike-pen < FF[s]], s)
+  }
+  i <- n
+  pt_rup_fin <- c()
+  while(i>1){
+    if (pt_rupt[i]>2){
+      pt_rup_fin <- c(pt_rup_fin, pt_rupt[i])
+    }
+    i <- pt_rupt[i]-1
+  }
+  return(pt_rup_fin)
+}
+
+
+#################################################################################
+#modele 1
+# y est une série, t1 est une borne inférieure, t2 es une borne supérieure
+est_mod1 <- function(y,t1,t2){
+  return(list("mu"=mean(y[t1:t2])))
+}
+
+cout_mod1 <- function(y,t1,t2){
+  return(sum((y[t1:t2]-mean(y[t1:t2]))^2))
+}
+# l est la longueur de la simulation, m est une liste contenant les mu du modèle, tau est une liste contenant les points de rupture du modèle
+simu_mod1 <- function(l,m,tau){
+  tau <- c(0,tau,l)
+  y <- numeric(l)
+  for (k in 1:(length(tau)-1)){
+    epsilon <- rnorm(tau[k+1]-tau[k])
+    y[(tau[k]+1):tau[k+1]] <- m[k] + epsilon
+  }
+  return(y)  
+}
+
+illus_mod1 <- function(l,m,tau){
+  tau <- c(0,tau,l)
+  y <- numeric(l)
+  for (k in 1:(length(tau)-1)){
+    y[(tau[k]+1):tau[k+1]] <- m[k]
+  }
+  return(y)
+}
+
+#modele 2
+est_mod2 <- function(y,t1,t2){
+  yt <- y[t1:t2]
+  tt <- t1:t2
+  beta <- sum((yt - mean(yt)) * (tt - (t1 + t2)/2)) / sum((tt - (t1 + t2)/2)^2)
+  mu <- mean(yt) - beta * (t1 + t2)/2
+  return(list("mu"=mu,"beta"=beta))
+}
+
+cout_mod2 <- function(y, t1, t2){
+  if (t1==t2){
+    return(0)
+  }
+  yt <- y[t1:t2]
+  tt <- t1:t2
+  beta <- sum((yt - mean(yt)) * (tt - (t1 + t2)/2)) / sum((tt - (t1 + t2)/2)^2)
+  mu <- mean(yt) - beta * (t1 + t2)/2
+  return(sum((yt - (mu + beta * tt))^2))
+}
+# l est la longueur de la simulation, m est une liste contenant les mu du modèle, b est une liste contenant les beta du modèle,tau est une liste contenant les points de rupture du modèle
+simu_mod2 <- function(l,m,b,tau){
+  tau <- c(0,tau,l)
+  y <- numeric(l)
+  for (k in 1:(length(tau)-1)){
+    epsilon <- rnorm(tau[k+1]-tau[k])
+    y[(tau[k]+1):tau[k+1]] <- m[k] + b[k] * ((tau[k]+1):tau[k+1]) + epsilon
+  }
+  return(y)
+}
+
+illus_mod2 <- function(l,m,b,tau){
+  tau <- c(0,tau,l)
+  y <- numeric(l)
+  for (k in 1:(length(tau)-1)){
+    y[(tau[k]+1):tau[k+1]] <- b[k] * ((tau[k]+1):tau[k+1]) + m[k]
+  }
+  return(y)
+}
+
+
+#simulation AR1
+# l est la longueur de la simulation, p le coefficient phi du modèle, v_ la variance
+simu_ar1 <- function(l,p,v_){
+  y0 <- 0
+  for (i in 1:50) {
+    y0 <- y0*p + rnorm(1,0,sqrt(v_))
+  }
+  y <- c(y0, numeric(l-1))
+  epsilon <- rnorm(l-1,0,sqrt(v_))
+  for (t in 2:l){
+    y[t] <- y[t-1]*p + epsilon[t-1]
+  }
+  return(y)
+}
+
+#modele 3
+
+est_mod3 <- function(y,t1,t2){
+  yt <- y[t1:t2]
+  ytm1 <- y[(t1-1):(t2-1)]
+  tt <- t1:t2
+  I <- t2 - t1 + 1
+  phi <- (I * sum(ytm1 * yt) - sum(ytm1) * sum(yt))/(I * sum(ytm1^2) - sum(ytm1)^2)
+  mu <- sum(yt - phi * ytm1)/(I*(1 - phi))
+  return(list("phi"=phi,"mu"=mu))
+}
+
+cout_mod3 <- function(y,t1,t2){
+  if (t1 == t2){
+    return(0)
+  }
+  yt <- y[t1:t2]
+  ytm1 <- y[(t1-1):(t2-1)]
+  tt <- t1:t2
+  I <- t2 - t1 + 1
+  b <- I * sum(ytm1 * yt) - sum(ytm1) * sum(yt)
+  e <- I * sum(ytm1^2) - sum(ytm1)^2
+  phi <- b/e
+  mu <- sum(yt - phi * ytm1)/(I*(1 - phi))
+  cout <- sum( (yt - mu - phi * (ytm1 - mu))^2 )
+  return(cout)
+}
+# l est la longueur de la simulation, m est une liste contenant les mu du modèle, p est une liste contenant les phi du modèle et tau est une liste contenant les points de rupture du modèle
+simu_mod3 <- function(l,m,p,v,tau){
+  tau <- c(0,tau,l)
+  y <- numeric(l)
+  for (k in 1:(length(tau)-1)){
+    y[(tau[k]+1):tau[k+1]] <- simu_ar1 (tau[k+1]-tau[k], p[k], v) + m[k]
+  }
+  return(y)
+}
+
+illus_mod3 <- function(l,m,tau){
+  tau <- c(0,tau,l)
+  y <- numeric(l)
+  for (k in 1:(length(tau)-1)){
+    y[(tau[k]+1):tau[k+1]] <- m[k]
+  }
+  return(y)
+}
+
+
+#modele 4
+est_mod4 <- function(y, t1, t2){
+  yt <- y[t1:t2]
+  ytm1 <- y[(t1-1):(t2-1)]
+  tt <- t1:t2
+  I <- t2 - t1 + 1
+  
+  a <- I * sum(tt * ytm1) - sum(tt) * sum(ytm1)
+  c <- sum(tt)^2 - I * sum(tt^2)
+  d <- I * sum(tt * yt) - sum(tt) * sum(yt) - a
+  
+  f <- sum(tt^2) * sum(ytm1^2) - sum(tt * ytm1)^2
+  g <- sum(tt^2) * sum(ytm1 * yt) - sum(tt * yt) * sum(ytm1 * tt)
+  h <- sum(tt^2) * sum(ytm1) - sum(tt) * sum(ytm1 * tt)
+  i <- sum(tt)^2 - I * sum(tt^2)
+  j <- sum(tt^2) * sum(yt) - sum(tt) * sum(yt * tt)
+  k <- sum(tt) * sum(tt * ytm1) - sum(tt^2) * sum(ytm1)
+  
+  
+  phi <- (h*j + g*i)/(f*i - h * k)
+  w <- ((d + a) - phi * a)/c
+  alpha <- w/(phi - 1)
+  delta <- -sum(yt - phi * ytm1 + w * tt)/I
+  beta <- -(delta + alpha * phi)/(1-phi)
+  
+  return(list("alpha"=alpha, "beta" = beta, "phi" = phi))
+  
+}
+
+cout_mod4 <- function(y, t1, t2) {
+  if (t1 == t2){
+    return(0)
+  }
+  yt <- y[t1:t2]
+  ytm1 <- y[(t1-1):(t2-1)]
+  tt <- t1:t2
+  I <- t2 - t1 + 1
+  i <- sum(tt)^2 - I * sum(tt^2)
+  h <- sum(tt^2) * sum(ytm1) - sum(tt) * sum(ytm1 * tt)
+  g <- sum(tt^2) * sum(ytm1 * yt) - sum(tt * yt) * sum(ytm1 * tt)
+  j <- sum(tt^2) * sum(yt) - sum(tt) * sum(yt * tt)
+  k <- sum(tt) * sum(tt * ytm1) - sum(tt^2) * sum(ytm1)
+  f <- sum(tt^2) * sum(ytm1^2) - sum(tt * ytm1)^2
+  a <- I * sum(tt * ytm1) - sum(tt) * sum(ytm1)
+  c <- sum(tt)^2 - I * sum(tt^2)
+  d <- I * sum(tt * yt) - sum(tt) * sum(yt) - a
+  
+  
+  phi <- (h*j + g*i)/(f*i - h * k)
+  w <- ((d + a) - phi * a)/c
+  alpha <- w/(phi - 1)
+  delta <- -sum(yt - phi * ytm1 + w * tt)/I
+  beta <- (delta + alpha * phi)/(phi - 1)
+  
+  cout <- sum( (yt - phi * ytm1 - alpha * (1 - phi) * tt - alpha * phi - beta * (1 - phi))^2  )
+  if(is.nan(cout)){
+    return(0)
+  }
+  return(cout)
+}
+# l est la longueur de la simulation, a est une liste contenant les alpha du modèle, b est une liste contenant les beta du modèle,v est la variance, p est une liste contenant les phi du modèle et tau est une liste contenant les points de rupture du modèle
+simu_mod4 <- function(l,a,b,p,v,tau){
+  tau <- c(0,tau,l)
+  y <- numeric(l)
+  for (k in 1:(length(tau)-1)){
+    y[(tau[k]+1):tau[k+1]] <- a[k] * ((tau[k]+1):tau[k+1]) + b[k] + simu_ar1(tau[k+1]-tau[k],p[k],v)
+  }
+  return(y)
+}
+
+illus_mod4 <- function(l,a,b,tau){
+  tau <- c(0,tau,l)
+  y <- numeric(l)
+  for (k in 1:(length(tau)-1)){
+    y[(tau[k]+1):tau[k+1]] <- a[k] * ((tau[k]+1):tau[k+1]) + b[k]
+  }
+  return(y)
+}
+
+# code moyenne glissante
+#argument de mg, n est la taille de la fenàªtre de glissement, y est la série
+mg<- function(n,y){
+  long <- length(y)
+  y_mg <- numeric(long)
+  for (i in (1:long)) {
+    if (i <= n) {
+      y_mg[i] <- mean(y[1:i])
+    }
+    if (i > n) {
+      y_mg[i] <- mean(y[(i - n):i])
+    }
+  }
+  return(y_mg)
+}
+
+
+```
+
+## Visualisation de la CET
+
+Nous allons tout d'abord tracer la série, sa moyenne glissante sur 5 ans, sa fonction d'autocorrélation et sa fonction d'autocorrélation partielle pour visualiser la série CET et ses propriétés.
+```{r echo=FALSE}
+set.seed(graine)
+
+annee <- 1660:2021
+
+#plot de la série
+plot(annee,CET,type="l",xlab="Années",ylab="Températures en celsius",main=" Série CET",col="darkblue")
+
+#plot de la moyenne glissante sur 5 ans
+plot(annee,mg(5,CET),type="l",xlab="Années",ylab="Températures en celsius",main=" Série CET moyenne glissante sur 5 ans",col="darkblue")
+# Fonction d'autocorrélation
+acf(CET,lag.max=100,type=c("correlation"))
+#Fonction d'autocorrélation partielle
+pacf(CET,100)
+
+```
+
+## Algorithme de programmation dynamique
+Nous allons maintenant tester les algorithmes dynamiques pour nos 4 modèles et illustrer les résultats par des graphes. D'abord, voici nos 4 modèles :
+
+```{r echo=FALSE}
+set.seed(graine)
+
+#algo dynamique
+opti_seg_mod1 <- opti_seg(CET,cout_mod1,10)
+opti_seg_mod2 <- opti_seg(CET,cout_mod2,10)
+opti_seg_mod3 <- opti_seg_ar1(CET,cout_mod3,10)
+opti_seg_mod4 <- opti_seg_ar1(CET,cout_mod4,10)
+```
+
+Ensuite, on va pénaliser le coût final de chaque modèle pour la série CET avec la pénalité BIC simplifiée $p (k + 1)\ln(n)$ où $p$ est le nombre de paramètre par segment du modèle, $k$ le nombre de points de rupture qu'on fera varier de $1$ à $10$ et $n$ la longueur de la série.
+
+```{r echo = FALSE}
+set.seed(graine)
+
+#nombre de points de rupture optimaux pénalisé par le BIC
+K1 <- which.min(opti_seg_mod1$couts_finaux + 1*((1:10)+1)*log(362))
+K2 <- which.min(opti_seg_mod2$couts_finaux + 2*((1:10)+1)*log(362))
+K3 <- which.min(opti_seg_mod3$couts_finaux + 2*((1:10)+1)*log(362))
+K4 <- which.min(opti_seg_mod4$couts_finaux + 3*((1:10)+1)*log(362))
+```
+
+On trouve ainsi, $K1 = 3$ et $K2 = K3 = K4 = 1$ où $Ki$ est le nombre optimal de point de rupture du modèle i.
+Ensuite, on stock dans les variables $taui$ suivantes les points de rupture par modèle. On prend le premier élément de $taui$ qui vaut $0$ et le dernier qui vaut $362$.
+
+```{r echo=FALSE}
+set.seed(graine)
+
+tau1 <- c(0,sort(opti_seg_mod1$tau[K1,][1:K1]),362)
+tau2 <- c(0,opti_seg_mod2$tau[K2,][1:K2],362)
+tau3 <- c(0,opti_seg_mod3$tau[K3,][1:K3],362)
+tau4 <- c(0,opti_seg_mod4$tau[K4,][1:K4],362)
+
+
+```
+
+### Modèle 1: Rupture dans la moyenne
+
+```{r echo=FALSE}
+set.seed(graine)
+#Le calcul des paramètres du premier modèle pour la CET :#
+mu1 <- numeric(K1+1)
+for (i in 1:(K1+1)){
+  mu1[i] <- est_mod1(CET, tau1[i]+1,tau1[i+1])$mu
+}
+CET_mod1 <- illus_mod1(362, mu1, sort(opti_seg_mod1$tau[K1,][1:K1]))
+```
+L'illustration graphique du premier modèle pour la CET.
+```{r}
+set.seed(graine)
+plot(annee,CET, type = "l", ylim = c(6.5,11.5), xlab = " ", ylab = " ")
+par(new = TRUE)
+plot(annee,CET_mod1, type = "l", ylim = c(6.5,11.5), lwd = 2, col = "red", xlab = "Année", ylab = "Température", main = "Rupture en moyenne programmation dynamique")
+```
+
+On refait la même chose avec les trois derniers modèles.
+
+### Le modèle 2: rupture dans la tendance
+
+```{r echo = FALSE}
+set.seed(graine)
+#Le calcul des paramètres du deuxième modèle :#
+mu2 <- numeric(K2+1)
+beta2 <- numeric(K2+1)
+
+mu2[1] <- est_mod2(CET, 1, tau2[2])$mu
+mu2[2] <- est_mod2(CET, tau2[2],362)$mu
+
+beta2[1] <- est_mod2(CET, 1, tau2[2])$beta
+beta2[2] <- est_mod2(CET, tau2[2],362)$beta
+
+CET_mod2 <- illus_mod2(362, mu2, beta2, opti_seg_mod2$tau[K2,][1:K2])
+```
+L'illustration du deuxième modèle avec l'algorithme dynamique :
+```{r}
+set.seed(graine)
+plot(CET, type = "l", ylim = c(6.5,11.5), xlab = " ", ylab = " ")
+par(new = TRUE)
+plot(CET_mod2, type = "l", ylim = c(6.5,11.5), lwd = 2, col = "red", xlab = "Années", ylab = "Températures", main = "Rupture en tendance programmation dynamique")
+```
+
+### Le modèle 3: rupture dans la moyenne avec bruit AR(1)
+
+```{r echo = FALSE}
+set.seed(graine)
+#Le calcul des paramètre du troisième modèle :#
+mu3 <- numeric(K3+1)
+mu3[1] <- est_mod3(CET,2,tau3[2]+1)$mu
+mu3[2] <- est_mod3(CET,tau3[2]+2,362)$mu
+
+CET_mod3 <- illus_mod1(361, mu3, opti_seg_mod3$tau[K3,][1:K3])
+```
+L'illustration du troisième modèle :
+```{r}
+set.seed(graine)
+plot(CET[2:362], type = "l", ylim = c(6.5,11.5), xlab = " ", ylab = " ")
+par(new = TRUE)
+plot(CET_mod3, type = "l", ylim = c(6.5,11.5), lwd = 2, col = "red", xlab = "Années", ylab = "Températures", main = "Rupture en moyenne avec bruit AR(1) programmation dynamique")
+```
+
+### Le modèle 4: rupture dans la tendance avec bruit AR(1)
+
+
+```{r echo = FALSE}
+set.seed(graine)
+#Le calcul des paramètre du dernier modèle :#
+alpha4 <- numeric(K4+1)
+beta4 <- numeric(K4+1)
+
+alpha4[1] <- est_mod4(CET,2,tau4[2]+1)$alpha
+alpha4[2] <- est_mod4(CET,tau4[2]+2,362)$alpha
+
+beta4[1] <- est_mod4(CET,2,tau4[2]+1)$beta
+beta4[2] <- est_mod4(CET,tau4[2]+2,362)$beta
+
+CET_mod4 <- illus_mod2(361, beta4, alpha4, opti_seg_mod3$tau[K4,][1:K4])
+```
+
+L'illustration du dernier modèle :
+```{r}
+set.seed(graine)
+plot(CET[2:362], type = "l", ylim = c(6.5,11.5), xlab = " ", ylab = " ")
+par(new = TRUE)
+plot(CET_mod4, type = "l", ylim = c(6.5,11.5), lwd = 2, col = "red", xlab = "Années", ylab = "Températures", main = "Rupture en tendance avec bruit AR(1) programmation dynamique")
+```
+
+## Algorithme PELT
+
+Nous testons  l'algorithe PELT sur la CET pour nos 4 modèles:
+
+```{r echo=FALSE}
+set.seed(graine)
+pelt_mod1 <- pelt(CET, 2, log(362),cout_mod1)
+pelt_mod2 <- pelt(CET, 2, 2*log(362),cout_mod2)
+pelt_mod3 <- pelt_AR(CET, 2, 2*log(362),cout_mod3)
+pelt_mod4 <- pelt_AR(CET, 2, 3*log(362),cout_mod4)
+
+```
+```{r}
+set.seed(graine)
+#On a le nombre de points de rupture optimaux automatiquement avec le PELT
+K1_pelt <- length(pelt_mod1)
+K2_pelt  <- length(pelt_mod2)
+K3_pelt  <- length(pelt_mod3)
+K4_pelt  <- length(pelt_mod4)
+
+tau1_pelt<- c(0,sort(pelt_mod1),362)
+tau2_pelt <- c(0,sort(pelt_mod2),362)
+tau3_pelt <- c(0,sort(pelt_mod3),362)
+tau4_pelt<- c(0,sort(pelt_mod4),362)
+```
+
+
+### Modèle 1: Rupture dans la moyenne
+
+Nous avons 2 points de rupture pour CET pour le modèle 1 avec le PELT
+```{r}
+set.seed(graine)
+pelt_mod1
+```
+```{r echo=FALSE}
+set.seed(graine)
+#Le calcul des paramètre du premier modèle :#
+mu1_pelt <- numeric(K1_pelt+1)
+for (i in 1:(K1_pelt+1)){
+  mu1_pelt[i] <- est_mod1(CET, tau1_pelt[i]+1,tau1_pelt[i+1])$mu
+}
+CET_pelt_mod1 <- illus_mod1(362, mu1_pelt, sort(pelt_mod1))
+
+```
+L'illustration graphique du premier modèle avec l'algorithme PELT.
+```{r}
+set.seed(graine)
+plot( annee,CET,                                 
+      main = "PELT:Points de rupture dans la moyenne",
+      xlab = "Années",
+      ylab = "Températures",
+      type='l')
+lines(annee,CET_pelt_mod1,col="red", lwd = 2)
+```
+
+### Le modèle 2: rupture dans la tendance
+
+Pour le modèle 2, nous obtenons 1 seul point de rupture avec le PELT:
+```{r}
+set.seed(graine)
+pelt_mod2
+```
+
+```{r echo = FALSE}
+set.seed(graine)
+#Le calcul des paramètres du deuxième modèle :#
+mu2_pelt <- numeric(K2_pelt+1)
+beta2_pelt <- numeric(K2_pelt+1)
+
+mu2_pelt[1] <- est_mod2(CET, 1, tau2_pelt[2])$mu
+mu2_pelt[2] <- est_mod2(CET, tau2_pelt[2],362)$mu
+
+beta2_pelt[1] <- est_mod2(CET, 1, tau2_pelt[2])$beta
+beta2_pelt[2] <- est_mod2(CET, tau2_pelt[2],362)$beta
+
+CET_pelt_mod2 <- illus_mod2(362, mu2_pelt, beta2_pelt, sort(pelt_mod2))
+```
+L'illustration du deuxième modèle avec l'algorithme PELT:
+```{r}
+set.seed(graine)
+plot(CET, type = "l", ylim = c(6.5,11.5), xlab = " ", ylab = " ")
+par(new = TRUE)
+plot(CET_pelt_mod2, type = "l", ylim = c(6.5,11.5), lwd = 2, col = "red", xlab = "Années", ylab = "Températures", main = "Rupture en tendance PELT")
+```
+
+### Le modèle 3: rupture dans la moyenne avec bruit AR(1)
+
+Nous obtenons 1 seul point de rupture avec le PELT:
+```{r}
+set.seed(graine)
+pelt_mod3
+```
+```{r echo = FALSE}
+set.seed(graine)
+#Le calcul des paramètre du troisième modèle :#
+mu3_pelt <- numeric(K3_pelt+1)
+mu3_pelt[1] <- est_mod3(CET,2,tau3_pelt[2]+1)$mu
+mu3_pelt[2] <- est_mod3(CET,tau3_pelt[2]+2,362)$mu
+
+CET_pelt_mod3 <- illus_mod1(361, mu3_pelt, sort(pelt_mod3))
+```
+L'illustration du troisième modèle :
+```{r}
+set.seed(graine)
+plot(CET[2:362], type = "l", ylim = c(6.5,11.5), xlab = " ", ylab = " ")
+par(new = TRUE)
+plot(CET_pelt_mod3, type = "l", ylim = c(6.5,11.5), lwd = 2, col = "red", xlab = "Années", ylab = "Températures", main = "Rupture en moyenne avec bruit AR(1) PELT")
+```
+
+### Le modèle 4: rupture dans la tendance avec bruit AR(1)
+
+Pour le modèle 4, le modèle de rupture dans la tendance avec bruit AR(1), on n'obtient aucun point de rupture avec le PELT
+```{r}
+set.seed(graine)
+pelt_mod4
+```
+## Comparaison de l'algorithme PELT et de l'algorithme de Programmation dynamique
+
+### Complexité
+
+Nous avons comparé la complexité des deux algorithmes à l'aide d'un graphe sur lequel nous avons représenté en abscisse la taille de la série simulée, et en ordonnée le temps d'execution des algorithmes.
+
+```{r echo = F}
+set.seed(graine)
+library(microbenchmark)
+n_sim <- 30
+long_sim <- 10
+ech <- matrix(NA, nrow = n_sim, ncol = n_sim*long_sim)
+for (i in 1:n_sim){
+  ech[i,(1:(long_sim*i))] <- simu_mod1(long_sim*i,c(0,10),floor(long_sim*i/2))
+}
+# Temps d'execution de l'algorithme PELT
+temps1 <- numeric(n_sim)
+for (i in 1:n_sim){
+  temps1[i] <- mean(microbenchmark( pelt(ech[i,][!is.na(ech[i,])], 5, log(long_sim*i), cout_mod1 ), times = 10L)$time)
+}
+
+
+# Temps d'execution de l'algorithme de programmation dynamique
+temps2 <- numeric(n_sim)
+for (i in 1:n_sim){
+  temps2[i] <- mean(microbenchmark( opti_seg(ech[i,][!is.na(ech[i,])], cout_mod1, 5), times = 10L)$time)
+}
+
+```
+
+Pour le PELT, nous voyons se dessiner une droite qui illustre la complexité en $\mathcal{O}(n)$ de l'algorithme PELT.
+
+```{r}
+set.seed(graine)
+# Plot de l'algorithme PELT
+plot((1:n_sim)*long_sim,temps1, xlab="Taille de la simulation", ylab="Temps en nanoseconde",type ="l",col="red",main="Temps d'execution de l'algorithme PELT")
+```
+
+Pour la programmation dynamique, nous voyons se dessiner une parabole qui illustre la complexité en $\mathcal{O}(n^2)$ de l'algorithme de programmation dynamique.
+
+```{r}
+set.seed(graine)
+#Plot de l'algorithme de programmation dynamique
+plot((1:n_sim)*long_sim, temps2, xlab="Taille de la simulation", ylab="Temps en nanoseconde", type ="l",col="blue",main="Temps d'execution de l'algorithme de programmation dynamique")
+```
+
+Nous pouvons superposer les deux graphes pour comparer les temps d'execution des deux algorithmes. Nous  voyons très clairement que l'algorithme PELT est beaucoup plus rapide que l'algorithme de programmation dynamique.
+
+```{r}
+set.seed(graine)
+# plot des temps d'execution des deux algo superposés
+plot((1:n_sim)*long_sim,temps1, ylab="Temps en nanoseconde", xlab="Taille de la simulation",type ="l",ylim=range(temps1,temps2),col="red",main="Comparaison des temps d'execution des l'algorithmes")
+lines((1:n_sim)*long_sim, temps2, xlab="Taille de la simulation", col="blue")
+legend(1,range(temps1,temps2)[2],legend=c("PELT","programmation dynamique"), col=c("red","blue"),lty = 1,box.lty =par("lty") ,cex=0.8)
+```
+
+### Simulations
+On retrouve enfin les résultats avec simulations arbitraire :
+
+#### Modèle 1:  rupture dans la moyenne
+
+```{r echo = FALSE}
+set.seed(graine)
+simulation_modele_1 <- simu_mod1(200,c(-10,10),100)
+
+#resultats pour du modele 1 pour l'algorithme dynamique
+resultat_dynamique_mod1 <- opti_seg(simulation_modele_1, cout_mod1, 10)
+
+#nombre de points de rupture optimal
+K1_sim <- which.min(resultat_dynamique_mod1$couts_finaux + 1*((1:10)+1)*log(200))
+
+#points de rupture de la simulation pour le modele 1 :
+tau1_sim <- c(0,sort(resultat_dynamique_mod1$tau[K1_sim,][1:K1_sim]),200)
+
+#resultats pour du modele 1 pour le PELT
+resultat_pelt_mod1 <- pelt(simulation_modele_1, 1, log(200), cout_mod1)
+K1_pelt_sim<-length(resultat_pelt_mod1)
+tau1_pelt_sim <- c(0,sort(resultat_pelt_mod1),200)
+
+```
+Voici le résultat avec l'algorithme dynamique :
+```{r echo = FALSE}
+set.seed(graine)
+mu1_sim <- numeric(K1_sim+1)
+for (i in 1:(K1_sim+1)){
+  mu1_sim[i] <- est_mod1(simulation_modele_1, tau1_sim[i]+1,tau1_sim[i+1])$mu
+}
+sim_mod1 <- illus_mod1(200, mu1_sim, sort(resultat_dynamique_mod1$tau[K1_sim,][1:K1_sim]))
+```
+```{r}
+set.seed(graine)
+plot(simulation_modele_1, type = "l", ylim = c(-13.5,13.5), xlab = " ", ylab = " ")
+par(new = TRUE)
+plot(sim_mod1, type = "l", ylim = c(-13.5,13.5), lwd = 2, col = "red", xlab = "Année", ylab = "Température", main = "Rupture en moyenne programmation dynamique")
+```
+
+Voici le résultat avec l'algorithme PELT :
+```{r echo = FALSE}
+set.seed(graine)
+mu1_pelt_sim <- numeric(K1_pelt_sim+1)
+for (i in 1:(K1_pelt_sim+1)){
+  mu1_pelt_sim[i] <- est_mod1(simulation_modele_1, tau1_pelt_sim[i]+1,tau1_pelt_sim[i+1])$mu
+}
+sim_pelt_mod1 <- illus_mod1(200, mu1_pelt_sim, sort(resultat_pelt_mod1))
+```
+```{r}
+set.seed(graine)
+plot(simulation_modele_1, type = "l", ylim = c(-13.5,13.5), xlab = " ", ylab = " ")
+par(new = TRUE)
+plot(sim_pelt_mod1, type = "l", ylim = c(-13.5,13.5), lwd = 2, col = "red", xlab = "Année", ylab = "Température", main = "Rupture en moyenne PELT")
+```
+
+#### Modèle 2:  rupture dans la tendance
+
+```{r echo=FALSE}
+set.seed(graine)
+### MODELE 2
+simulation_modele_2 <- simu_mod2(250,c(0,-30,70),c(1,0.5,0),c(100,200))
+
+#resultats pour du modele 2 pour l'algorithme dynamique
+resultat_dynamique_mod2 <- opti_seg(simulation_modele_2, cout_mod2, 10)
+
+#nombre de points de rupture optimal
+K2_sim <- which.min(resultat_dynamique_mod2$couts_finaux + 2*((1:10)+1)*log(250))
+
+#points de rupture de la simulation pour le modele 1 :
+tau2_sim <- c(0,sort(resultat_dynamique_mod2$tau[K2_sim,][1:K2_sim]),250)
+
+#resultats pour du modele 2 pour le PELT
+resultat_pelt_mod2 <- pelt(simulation_modele_2, 2, 2*log(250), cout_mod2)
+K2_pelt_sim<-length(resultat_pelt_mod2)
+tau2_pelt_sim <- c(0,sort(resultat_pelt_mod2),250)
+
+```
+Voici le résultat avec l'algorithme dynamique :
+
+```{r echo = FALSE}
+set.seed(graine)
+#estimation des paramètres
+mu2_sim <- numeric(K2_sim+1)
+beta2_sim <- numeric(K2_sim+1)
+for (i in 1:(K2_sim+1)){
+  mu2_sim[i] <- est_mod2(simulation_modele_2, tau2_sim[i]+1,tau2_sim[i+1])$mu
+  beta2_sim[i] <- est_mod2(simulation_modele_2, tau2_sim[i]+1,tau2_sim[i+1])$beta
+}
+sim_mod2 <- illus_mod2(250, mu2_sim, beta2_sim, sort(resultat_dynamique_mod2$tau[K2_sim,][1:K2_sim]))
+```
+```{r}
+set.seed(graine)
+plot(simulation_modele_2, type = "l", ylim = c(-2,105), xlab = " ", ylab = " ")
+par(new = TRUE)
+plot(sim_mod2, type = "l", ylim = c(-2,105), lwd = 2, col = "red", xlab = "Années", ylab = "Températures", main = "Rupture en tendance programmation dynamique")
+```
+Voici le résultat avec l'algorithme PELT :
+
+```{r echo = FALSE}
+set.seed(graine)
+#estimation des paramètres
+mu2_pelt_sim <- numeric(K2_pelt_sim+1)
+beta2_pelt_sim <- numeric(K2_pelt_sim+1)
+for (i in 1:(K2_pelt_sim+1)){
+  mu2_pelt_sim[i] <- est_mod2(simulation_modele_2, tau2_pelt_sim[i]+1,tau2_pelt_sim[i+1])$mu
+  beta2_pelt_sim[i] <- est_mod2(simulation_modele_2, tau2_pelt_sim[i]+1,tau2_pelt_sim[i+1])$beta
+}
+sim_pelt_mod2 <- illus_mod2(250, mu2_pelt_sim, beta2_pelt_sim, sort(resultat_pelt_mod2))
+```
+```{r}
+set.seed(graine)
+plot(simulation_modele_2, type = "l", ylim = c(-2,105), xlab = " ", ylab = " ")
+par(new = TRUE)
+plot(sim_pelt_mod2, type = "l", ylim = c(-2,105), lwd = 2, col = "red", xlab = "Années", ylab = "Températures", main = "Rupture en tendance PELT")
+```
+
+#### Modèle 3:rupture dans la moyenne avec bruit AR(1)
+
+```{r echo=FALSE}
+set.seed(graine)
+### MODELE 3
+simulation_modele_3 <- simu_mod3(200,c(-5,10,4.5),c(0.1,-0.7,0.7),1,c(70,150))
+
+#resultats pour du modele 3 pour l'algorithme dynamique
+resultat_dynamique_mod3 <- opti_seg_ar1(simulation_modele_3, cout_mod3, 10)
+
+#nombre de points de rupture optimal
+K3_sim <- which.min(resultat_dynamique_mod3$couts_finaux + 2*((1:10)+1)*log(200))
+
+#points de rupture de la simulation pour le modele 3 :
+tau3_sim <- c(0,sort(resultat_dynamique_mod3$tau[K3_sim,][1:K3_sim]),199)
+
+#resultats pour du modele 3 pour le PELT
+resultat_pelt_mod3 <- pelt_AR(simulation_modele_3, 2, 2*log(200), cout_mod3)
+K3_pelt_sim<-length(resultat_pelt_mod3)
+tau3_pelt_sim <- c(0,sort(resultat_pelt_mod3),199)
+
+
+
+```
+Voici le résultat avec l'algorithme dynamique :
+```{r echo = FALSE}
+set.seed(graine)
+mu3_sim <- numeric(K3_sim+1)
+for (i in 1:(K3_sim+1)){
+  mu3_sim[i] <- est_mod3(simulation_modele_3, tau3_sim[i]+2,tau3_sim[i+1]+1)$mu
+}
+sim_mod3 <- illus_mod1(199, mu3_sim, sort(resultat_dynamique_mod3$tau[K3_sim,][1:K3_sim]))
+```
+```{r}
+set.seed(graine)
+plot(simulation_modele_3[2:200], type = "l", ylim = c(-7,15), xlab = " ", ylab = " ")
+par(new = TRUE)
+plot(sim_mod3[2:200], type = "l", ylim = c(-7,15), lwd = 2, col = "red", xlab = "Années", ylab = "Températures", main = "Rupture en moyenne avec bruit AR(1) programmation dynamique")
+```
+
+Voici le résultat avec l'algorithme PELT :
+
+```{r echo = FALSE}
+set.seed(graine)
+mu3_pelt_sim <- numeric(K3_pelt_sim+1)
+for (i in 1:(K3_pelt_sim+1)){
+  mu3_pelt_sim[i] <- est_mod3(simulation_modele_3, tau3_pelt_sim[i]+2,tau3_pelt_sim[i+1]+1)$mu
+}
+sim_pelt_mod3 <- illus_mod1(199, mu3_pelt_sim, sort(resultat_pelt_mod3))
+```
+```{r}
+set.seed(graine)
+plot(simulation_modele_3[2:200], type = "l", ylim = c(-7,15), xlab = " ", ylab = " ")
+par(new = TRUE)
+plot(sim_pelt_mod3[2:200], type = "l", ylim = c(-7,15), lwd = 2, col = "red", xlab = "Années", ylab = "Températures", main = "Rupture en moyenne avec bruit AR(1) PELT")
+```
+
+#### Modèle 4:  rupture dans la tendance avec bruit AR(1)
+
+```{r echo=FALSE}
+set.seed(graine)
+### MODELE 4
+simulation_modele_4 <- simu_mod4(200,c(1,0,0.15),c(0,50,32),c(0.5,-0.5,0.8),1,c(50,120))
+
+#resultats pour du modele 4 pour l'algorithme dynamique
+resultat_dynamique_mod4 <- opti_seg_ar1(simulation_modele_4, cout_mod4, 10)
+
+#nombre de points de rupture optimal
+K4_sim <- which.min(resultat_dynamique_mod4$couts_finaux + 3*((1:10)+1)*log(200))
+
+#points de rupture de la simulation pour le modele 4 :
+tau4_sim <- c(0,sort(resultat_dynamique_mod4$tau[K4_sim,][1:K4_sim]),199)
+
+#resultats pour du modele 4 pour le PELT
+resultat_pelt_mod4 <- pelt_AR(simulation_modele_4, 2, 3*log(200), cout_mod4)
+K4_pelt_sim<-length(resultat_pelt_mod4)
+tau4_pelt_sim <- c(0,sort(resultat_pelt_mod4),199)
+```
+Voici le résultat avec l'algorithme dynamique :
+
+```{r echo = FALSE}
+set.seed(graine)
+alpha4_sim <- numeric(K4_sim+1)
+beta4_sim <- numeric(K4_sim+1)
+for (i in 1:(K4_sim+1)){
+  alpha4_sim[i] <- est_mod4(simulation_modele_4, tau4_sim[i]+2,tau4_sim[i+1]+1)$alpha
+  beta4_sim[i] <- est_mod4(simulation_modele_4, tau4_sim[i]+2,tau4_sim[i+1]+1)$beta
+
+}
+sim_mod4 <- illus_mod2(199, beta4_sim, alpha4_sim, sort(resultat_dynamique_mod4$tau[K4_sim,][1:K4_sim]))
+```
+```{r}
+set.seed(graine)
+plot(simulation_modele_4[2:200], type = "l", ylim = c(-1,100), xlab = " ", ylab = " ")
+par(new = TRUE)
+plot(sim_mod4[2:200], type = "l", ylim = c(-1,100), lwd = 2, col = "red", xlab = "Années", ylab = "Températures", main = "Rupture en tendance avec bruit AR(1) programmation dynamique")
+```
+Voici le résultat avec l'algorithme PELT:
+
+```{r echo = FALSE}
+set.seed(graine)
+alpha4_pelt_sim <- numeric(K4_pelt_sim+1)
+beta4_pelt_sim <- numeric(K4_pelt_sim+1)
+for (i in 1:(K4_pelt_sim+1)){
+  alpha4_pelt_sim[i] <- est_mod4(simulation_modele_4, tau4_pelt_sim[i]+2,tau4_pelt_sim[i+1]+1)$alpha
+  beta4_pelt_sim[i] <- est_mod4(simulation_modele_4, tau4_pelt_sim[i]+2,tau4_pelt_sim[i+1]+1)$beta
+
+}
+sim_pelt_mod4 <- illus_mod2(199, beta4_pelt_sim, alpha4_pelt_sim, sort(resultat_pelt_mod4))
+
+```
+```{r}
+set.seed(graine)
+plot(simulation_modele_4[2:200], type = "l", ylim = c(-1,100), xlab = " ", ylab = " ")
+par(new = TRUE)
+plot(sim_pelt_mod4[2:200], type = "l", ylim = c(-1,100), lwd = 2, col = "red", xlab = "Années", ylab = "Températures", main = "Rupture en tendance avec bruit AR(1) PELT")
+```
+
+
+

@@ -1,0 +1,786 @@
+---
+title: "Project"
+subtitle: 'MCMC Methods'
+author: "C. Leempoels - A. Ndiaye - E. Songo"
+header-includes:
+  - \usepackage{mathrsfs}
+  - \usepackage{bm}
+  - \usepackage{dsfont}
+  - \usepackage{amsmath}
+  - \usepackage{mdframed}
+  - \usepackage{placeins}
+output: 
+  pdf_document:
+    number_sections: true
+---
+
+```{r include=FALSE}
+library(ggplot2)
+library(patchwork)
+library(latex2exp)
+library(matrixStats)
+library(knitr)
+library(philentropy)
+
+pal_blue = c("#3B9AB2", "#78B7C5", "#007592")
+pal_orange = c("#DC863B","#E1AF00", "#b05200")
+pal_mix = c("#78B7C5", "#E1AF00", "#92c578")
+```
+
+
+\tableofcontents
+
+\newpage
+
+\section*{Introduction}
+
+In the following report, we will be using various MCMC algorithms to explain and predict the haptoglobine gene. 
+
+\vspace{3mm}
+
+\noindent The gene has 3 possible configurations, we have been given a table of incidence for each one from a sample of $n = 500$ individuals. The associated distribution is also known, and is parametrised by $\theta \in [0,1]$ and $p \in [0,1]$.  
+
+\vspace{3mm}
+
+\noindent Since the gene frequencies follow the Hardy Weinberg Equilibrium, $\theta$ represents the frequency of the allele $a$. Furthermore, $p$ is the probability that the allele types of the parents are identical by descent, \textit{i.e.} an inbreeding coefficient.
+
+\vspace{3mm}
+
+\noindent We cannot get any information about whether or not the parents of the individuals are related just from $x^{\text{obs}}$, but we can infer it through the Bayesian paradigm.
+
+\section*{Model}
+
+The haptoglobine has 3 different possible configurations AA, aa, aA. If the population is randomly mating, genes frequencies are following Hardy Weinberg Equilibrium. In this exercise, we assume that the environment favors certain genes associations (e.g., geographically structured population). We describe this using an inbreeding model parametrised by $\theta \in [0, 1]$
+and $p \in [0, 1]$.
+
+> $\mathbb{P}(X=AA) = p(1-\theta) + (1-p)(1-\theta)^2$
+
+> $\mathbb{P}(X=aa) = p\theta + (1-p)\theta^2$
+
+> $\mathbb{P}(X=aA) = 2(1-p)\theta(1-\theta)$
+
+$p$ is referred to as the inbreeding coefficient and represents the probability that the allele types from parents are identical by descent.
+
+We observe the following data.
+
+```{r}
+x_obs = rep(c("AA",'aa', 'aA'), times = c(302, 125, 73))
+```
+
+```{r echo=FALSE}
+kable(table(x_obs), col.names = c("Alleles configurations", "Count"))
+```
+
+
+
+\newpage
+
+\section{EM algorithm}
+\subsection{Write a latent variable representation of the model using a latent Bernoulli random variable of parameter $p$, denoted $Z$.}
+
+In this part, we represente numerically the differente allele configurations as follow:
+  \begin{itemize}
+\item When the configuration is  AA , x=0
+\item When the configuration is  Aa , x=1
+\item When the configuration is  aa , x=2.
+\end{itemize}
+The given allele probability distribution can be represented with a latent variable $Z$. The experiment can be described as following.
+\begin{itemize}
+\item $Z$ is latent vector such that $(Z_i) \underset{iid}{\sim} \mathcal{B}er(p)$
+  \item If $Z_i=1$, the haptoglobine allele follows a Bernoulli distribution of parameter $\theta$. In this case, the allele type from parents are identical by descent. The only two configurations possible are AA and aa.
+\item If $Z_i=0$, the haptoglobine allele follows a binomial distribution of probability parameter $\theta$ and a number of trials equal to 2. The 3 configurations of the allele are possible.
+\end{itemize}
+Hence $(Z_i,X_i)$ has the following density function:
+  $$p(z_i,x_i)=p\left [ \theta^{ \frac{x_{i}}{2}}(1-\theta)^{1- \frac{x_{i}}{2}}\right]^{z_i} \delta_{xi\neq 1}\times (1-p)\left [\binom{2}{x_i}\theta^{ x_{i}}(1-\theta)^{2- x_{i}}\right]^{1-z_i}$$
+  
+  
+\subsection{Give the objective function of the EM algorithm associated to this latent representation and compute
+the updates for estimating $p$ and $\theta$.}
+
+We set n the number of observations.
+From the density function, we can derive the likelihood associated:
+  $$\mathcal{L}(p, \theta \vert x,Z)=\overset{n}{\underset{i=1}{\prod}} p(z_i,x_i)=\overset{n}{\underset{i=1}{\prod}}p\left [ \theta^{ \frac{x_{i}}{2}}(1-\theta)^{1- \frac{x_{i}}{2}}\right]^{z_i} \times (1-p)\left [\binom{2}{x_i}\theta^{ x_{i}}(1-\theta)^{2- x_{i}}\right]^{1-z_i} $$
+  
+  And the log-likelihood:
+  \begin{align*}
+\log(\mathcal{L}(p, \theta \vert x,Z))&=\overset{n}{\underset{i=1}{\sum}} \log (p) + z_i \left[ \frac{x_{i}}{2} \log (\theta) + (1-\frac{x_{i}}{2}) +\log (1- \theta)\right] \\
+&+ log(1-p) +(1-z_i)\left[  \log (\binom{2}{x_i}+ x_i \log (\theta ) + (2-x_i)\log (1-\theta)   \right]  
+\end{align*}
+
+
+The objective function of the EM algorithm associated to the latent representation of the question 1 is:
+  $$Q(\psi,\psi^{(t)})= \mathbb{E}\left[ \log(\mathcal{L}(p, \theta \vert x,Z))\right \vert x]$$
+  
+  With $\psi=(p,\theta)$
+  
+  As x is observed, we have:
+  
+  \begin{align*}
+Q(\psi,\psi^{(t)})&=\overset{n}{\underset{i=1}{\sum}} \log (p) + \mathbf{E}[z_i \vert x] \left[ \frac{x_{i}}{2} \log (\theta) + (1-\frac{x_{i}}{2}) +\log (1- \theta)\right] \\
+&+ log(1-p) +(1-\mathbf{E}[z_i \vert x])\left[  \log (\binom{2}{x_i}+ x_i \log (\theta ) + (2-x_i)\log (1-\theta)   \right]  
+\end{align*}
+
+
+
+Let's compute $\mathbb{E}[z_i \vert x]$:
+
+\begin{align*}
+    \mathbb{E}[z_i \vert x]&=\frac{\mathbb{P}(x_i \vert z_i=1)\mathbb{P}(z_i=1)}{\mathbb{P}(x_i \vert z_i=1)\mathbb{P}(z_i=1)+ p(x_i \vert Z_i=0)\mathbb{p}(z_i=0)}\\
+    &=\frac{\mathbb{P}(x_i \vert z_i=1)p}{\mathbb{P}(x_i \vert z_i=1)p+ \mathbb{P}(x_i \vert Z_i=0)(1-p)}
+\end{align*}
+
+ With: 
+ 
+$$\mathbb{P}(x_i \vert z_i=1)= \theta^{ \frac{x_{i}}{2}}(1-\theta)^{1- \frac{x_{i}}{2}}$$
+$$\mathbb{P}(x_i \vert z_i=0)=\binom{2}{x_i}\theta^{ x_{i}}(1-\theta)^{1- x_{i}}$$
+
+
+To simplify the calculus, we are going to use the updating formulas given in the practical session number 1 for mixture models.
+
+As a recall, we proved that:
+
+$$ Q(\psi, \psi^{(t)})= \underset{i=1}{\overset{n}{\sum}} \underset{k=1}{\overset{2}{\sum}} \tau_{ik}^{(t)} \log \left[ p_k f(x_i \vert \theta_k) \right]$$
+
+Where $\tau_{ik}^{(t)}=\frac{p_k^{(t)}f\left(x_i \vert \theta_k^{(t)}\right)}{\underset{l=1}{\overset{2}{\sum}}p_l^{(t)}f\left(x_i \vert \theta_l^{(t)}\right)}=\mathbb{E}[z_i \vert x]$
+ The update for estimating the mixing probabilities is given by:
+
+ $$p=\frac{\underset{i=1}{\overset{n}{\sum}}\tau_{i,1}^{(t)}}{n}$$
+
+ The update of theta is the solution of:
+ $$ \underset{i=1}{\overset{n}{\sum}} \underset{k=1}{\overset{2}{\sum}} \tau_{ik}^{(t)} \frac{\partial}{\partial \theta}\log \left[ f(x_i \vert \theta_k) \right]=0$$
+
+ By solving this equation we end up with:
+ $$ \theta= \frac{\underset{i=1}{\overset{n}{\sum}}\tau_{i,1} \frac{x_i}{2}+\underset{i=1}{\overset{n}{\sum}}\tau_{i,2} x_i}{\underset{i=1}{\overset{n}{\sum}}\tau_{i,1}+  2 \tau_{i,2}}$$
+ 
+\newpage 
+
+\subsection{Implement the corresponding EM algorithm and run it on the data $x^{obs}$ explaining your setting (e.g., initialization, stopping criterion). Check graphically the convergence of your algorithm and the fit between the estimated model and the empirical distribution of the data.}
+
+We randomly initialize $p_0$ and $\theta_0$ in the EM algorithm and we use the objective function to check the convergence. When the objective function reach its maximum, it can't increase more. So the difference between the values of the objective function is almost the same from an iteration to the next one. We control this difference with the parameter eps which is set to $10^{-9}$ by default.
+
+\vspace{3mm}
+
+```{r}
+
+algo_EM <- function(X, p_0 =runif(1), theta_0 = runif(1), max_iter = 10000,
+                    eps = 10^{-9}) {
+  n <- length(X)
+  # We initialize the tau_i,k vectors
+  tau <- matrix(data = rep(0, 2 * n), nrow = n, ncol = 2) 
+  p <- c(p_0, 1-p_0)
+  theta <- theta_0
+  objective <- numeric(max_iter) # We initialize a vector in which we will
+  # save the value af the objective function  at each iteration
+  for (iter in 1:max_iter) {
+    tau_1 <- p[1] * (theta^(X / 2)) * ((1 - theta)^(1 - X / 2)) * (X != 1) # updating tau
+    tau_2 <- p[2] * choose(2, X) * (theta^(X)) * ((1 - theta)^(2 - X))
+    tau[, 1] <- tau_1 / (tau_1 + tau_2)
+    tau[, 2] <- tau_2 / (tau_1 + tau_2)
+    objective[iter] <- sum(log(tau_1 + tau_2)) # Calculating the objective function
+
+
+    p <- colMeans(tau) # Updating p
+    # Updating theta
+    theta <- sum(tau[, 1] * X / 2 + tau[, 2] * X) / (sum(tau[, 1]) + 2 * sum(tau[, 2])) 
+    if ((iter > 2) && (abs(objective[iter] - objective[iter - 1]) < eps)) {
+      print(paste("Number of iterations before convergence:", as.character(iter)))
+      return(c(p, theta, objective[1:iter]))
+    }
+  }
+
+  return(c(p, theta, objective))
+}
+
+x_obs_EM <- c(rep(0, 302), rep(2, 125), rep(1, 73))
+Out_EM <- algo_EM(x_obs_EM)
+
+```
+
+```{r echo=FALSE}
+
+
+param_em <- Out_EM[1:3]
+objective_fonction <- Out_EM[4:length(Out_EM)]
+
+x_gen <- c(2 * rbinom(round(param_em[1] * length(x_obs_EM)), 1, param_em[3]), rbinom(round(param_em[2] * length(x_obs_EM)), 2, param_em[3]))
+
+
+```
+
+```{r echo = FALSE, fig.height = 4}
+
+plot(objective_fonction, xlab = "Iterations", 
+     ylab = "Objective function",
+     main = "Convergence of the EM algorithm", type = "o", col = "red")
+
+hist(x_obs_EM, col = rgb(0, 0, 1, 0.4),
+     main = "Observed data vs generated data with EM algorithm solution",
+     xlab='samples')
+hist(x_gen, col = rgb(1, 0, 0, 0.4), add = T)
+legend("topright", c("observed", "generated"), fill = c(rgb(0, 0, 1, 0.4), rgb(1, 0, 0, 0.4)))
+```
+
+
+\newpage
+\section{Metropolis Hastings}
+\subsection{Implement a Metropolis Hastings scheme using a Gaussian distribution as proposal density to sample from the posterior distribution of $(p,\theta)$.}
+
+Denote the observations by $x^{obs}$ with sampling distribution $f(.|p,\theta)$ and log likelihood $\mathscr{L}(p,\theta| x^{obs})$.
+
+\vspace{3mm}
+
+```{r}
+obs_distribution = function(x, p, theta){
+  AA = p*(1-theta) + (1-p)*(1-theta)^2 
+  aa = p*theta + (1-p)*theta^2 
+  aA = 2*(1-p)*theta*(1-theta)
+  return( (x=="AA")*AA + (x=="aa")*aa + (x=="aA")*aA )
+}
+
+log_likelihood_obs = function(p, theta){
+  error_out = -1000000
+  out = tryCatch( sum(log(obs_distribution(x_obs, p, theta)) ),
+    error = function(cond) return(error_out),
+    warning = function(cond) return(error_out)
+  )
+  return(out)
+}
+```
+
+
+Let $\pi(.)$ be the prior on $(p,\theta)$, with independent distribution on $p$ and $\theta$. 
+
+\vspace{3mm}
+
+```{r}
+# prior distribution using a uniform distribution
+log_prior_unif = function(p, theta) 
+  return(log(dunif(p) * dunif(theta)))
+
+# prior distribution using a beta distribution
+log_prior_beta = function(p, theta, a1, b1, a2, b2)
+  return(log(dbeta(p, a1, b1) * dbeta(theta, a2, b2)))
+```
+
+The posterior distribution we are going to sample from with the Metropolis Hastings algorithm is :
+
+>$\pi(p,\theta|x^{obs} ) \propto \mathscr{L}(p,\theta| x^{obs}) \pi(p,\theta)$
+
+\vspace{3mm}
+
+```{r}
+mh = function(n, burn_in, init, log_lik_obs, log_prior, sd_proposal, ...) {
+  iter = n + burn_in
+  samples = matrix(rep(0,2*iter), ncol = 2)
+  samples[1, ] = init
+  h_current = do.call(log_lik_obs, as.list(init)) + do.call(log_prior, c(as.list(init),...))
+  for (i in 2:iter) {
+    prop = rnorm(2, samples[i - 1, ], sd_proposal)
+    h_new = do.call(log_lik_obs, as.list(prop)) + do.call(log_prior, c(as.list(prop),...))
+    if (log(runif(1)) < h_new - h_current) {
+      samples[i, ] = prop
+      h_current = h_new
+    } else samples[i, ] = samples[i - 1, ]
+  }
+  samples = as.data.frame(samples[(burn_in + 1):iter, ])
+  colnames(samples) = c("p","theta")
+  rate = round(dim(unique(samples))[1]/dim(samples)[1], 4)
+  return(list(samples = samples, rate = rate))
+}
+```
+
+```{r include=FALSE, warning = FALSE}
+# PLOT SAMPLES FUNCTIONS
+
+plot_samples = function(samples, col_name, palette, plot_gaussian = TRUE){
+  mean = mean(samples[[col_name]])
+  sd = sd(samples[[col_name]])
+  labels = paste("N(", round(mean,2), ",", round(sd,2), ")")
+  
+  plt = ggplot(samples, aes (x = !! sym(col_name))) + 
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = 30,
+    fill = palette[1],
+    color = palette[2],
+    alpha = 0.1
+  ) + 
+  ylab(paste("empirical posterior of", col_name)) + 
+  theme(
+    legend.title = element_text(size=8),
+    legend.text = element_text(size=8),
+    axis.text = element_text(size=8),
+    axis.title = element_text(size=8),
+    axis.title.x = element_blank()
+  )
+  if(plot_gaussian){
+    plt = plt +
+      geom_function(
+        fun = dnorm, 
+        args = list(mean = mean, sd = sd),
+        color = palette[2],
+        lwd = 1,
+        aes(linetype  = "fun1")
+      ) +
+      scale_linetype_discrete(
+        name = "Posterior : ", 
+        labels = labels
+      )
+  } 
+  else {
+    plt = plt + geom_density(color = palette[2], lwd = 1)
+  }
+  
+  return(plt)
+}
+
+plot_both_samples = function(samples, title = "", subtitle = "", plot_gaussian = TRUE){
+  
+  plt1 = plot_samples(samples, "p", pal_blue, plot_gaussian)
+  plt2 = plot_samples(samples, "theta", pal_orange, plot_gaussian)
+  
+  plt = plt1 + plt2 + 
+    plot_annotation(
+      subtitle = TeX(subtitle),
+      theme = theme(
+        plot.title = element_text(size = 12),
+        plot.subtitle = element_text(size = 10)
+      )
+    ) +
+    plot_layout(guides = "collect") &
+    theme(legend.position = "right")
+    
+  if (title == "") return(plt)
+  
+  return(plt + plot_annotation(
+    title = TeX(title), 
+    theme = theme(plot.title = element_text(size = 12)))
+  )
+}
+```
+
+```{r echo=FALSE, fig.height=2.7, warning = FALSE}
+mh_res_unif = mh(10000, 1000, c(0.5, 0.5), log_likelihood_obs, log_prior_unif, 0.01)
+
+plot_both_samples(mh_res_unif$samples, 
+  title = "Fig. 2.1 : Sampling with the Metropolis Hastings algorithm ($\\sigma_{proposal} = 0.01$)",
+  subtitle = paste("Prior is a U(0,1) x U(0,1) distribution | Acceptance rate = ", mh_res_unif$rate),
+  plot_gaussian = FALSE)
+```
+
+```{r echo=FALSE, fig.height=2.5, warning = FALSE}
+mh_res_beta = mh(10000, 1000, c(0.5, 0.5), log_likelihood_obs, log_prior_beta, 0.01, a1 = 5, b1 = 1, a2 = 2, b2 = 5)
+
+plot_both_samples(mh_res_beta$samples, 
+  subtitle = paste("Prior is a B(5,1) x B(2,5) distribution | Acceptance rate = ", mh_res_beta$rate),
+  plot_gaussian = FALSE)
+```
+
+```{r echo=FALSE, fig.height=2.5, warning = FALSE}
+mh_res = mh(10000, 1000, c(0.5, 0.5), log_likelihood_obs, log_prior_beta, 0.01, a1 = .5, b1 = .5, a2 = .5, b2 = .5)
+
+plot_both_samples(mh_res$samples, 
+  subtitle = paste("Prior is a B(.5,.5) x B(.5,.5) distribution | Acceptance rate = ", mh_res$rate),
+  plot_gaussian = FALSE)
+```
+
+This scheme is not very sensitive to the choice of the prior or its parameters.
+
+\subsection{Test the sensitivity of the scheme to the variance of the Gaussian kernel. Discuss briefly your result.}
+
+This scheme is very sensitive to the choice of the variance of the gaussian kernel. Moreover, the lower the variance, the higher the acceptance rate. This result is quite intuitive because if the variance is too large then the proposed states for $p$ and $\theta$ will not belong to $[0,1]$.
+
+```{r echo=FALSE, fig.height=2.5, warning = FALSE}
+mh_res = mh(10000, 1000, c(0.5, 0.5), log_likelihood_obs, log_prior_unif, 0.1)
+
+plot_both_samples(mh_res$samples, 
+  title = "Fig. 2.2 : Sampling with the Metropolis Hastings algorithm (Uniform prior)",
+  subtitle = paste("$\\sigma_{proposal} = 0.1$ | Acceptance rate = ", mh_res$rate),
+  plot_gaussian = FALSE)
+```
+
+```{r echo=FALSE, fig.height=2.5, warning = FALSE}
+mh_res = mh(10000, 1000, c(0.5, 0.5), log_likelihood_obs, log_prior_unif, 0.5)
+
+plot_both_samples(mh_res$samples, 
+  subtitle = paste("$\\sigma_{proposal} = 0.5$ | Acceptance rate = ", mh_res$rate), 
+  plot_gaussian = FALSE)
+```
+
+```{r echo=FALSE, fig.height=2.5, warning = FALSE}
+mh_res = mh(10000, 1000, c(0.5, 0.5), log_likelihood_obs, log_prior_unif, 1)
+
+plot_both_samples(mh_res$samples, 
+  subtitle = paste("$\\sigma_{proposal} = 1$ | Acceptance rate = ", mh_res$rate), 
+  plot_gaussian = FALSE)
+```
+
+
+\newpage
+\section{Gibbs sampler}
+
+Our aim here is to use the Gibbs Sampler, an MCMC algorithm, to find the distribution of the unknown parameters $(z, p, \theta)$. 
+
+\subsection{Compute the conditional distribution using the latent representation of the model}
+
+The likelihood of the latent representation of our model is given for all $z \in \{0,1\}^n$, $p \in [0,1]$ and $\theta \in [0,1]$ by :
+\begin{equation*}
+    \mathcal{L}(p, \theta | z, x^{\text{obs}}) = \prod_{i=1}^{n}\pi(x_i, z_i | p, \theta) = \prod_{i=1}^{n} p \left[ \theta^{\frac{x_i}{2}}(1- \theta)^{1 - \frac{x_i}{2}} \right]^{z_i} \times (1-p) \left[ \binom{2}{x_i} \theta^{x_i}(1- \theta)^{2 - x_i} \right]^{1-z_i}
+\end{equation*}
+
+
+
+\subsubsection{Conditional distribution $\pi (p, \theta |z, x^{\text{obs}})$}
+
+Recall that $p$ and $\theta$ have independent prior distributions. Using Bayes' Theorem, we have :
+
+\begin{equation*}
+    \pi (p, \theta |z, x) = \frac{\mathcal{L}(p, \theta | z, x^{\text{obs}}) \pi(p, \theta)}{\pi(x, z)} = \frac{\mathcal{L}(p, \theta | z, x^{\text{obs}}) \pi(p) \pi(\theta)}{\int \int \pi(x, z | p', \theta')\pi(p') \pi(\theta')dp' d\theta'}
+\end{equation*}
+
+
+
+\noindent As a closed form for the denominator has proven difficult to compute, we estimate it numerically using a classic Monte Carlo method :
+
+\begin{equation*}
+    \hat{\pi}(x,z) = \frac{1}{K} \sum_{k=1}^{K} \pi(x, z | p_k, \theta_k), \quad (p_k,\theta_k)_{k \in [\![1,K]\!]} \overset{i.i.d}{\sim} \pi(p) \otimes \pi(\theta)
+\end{equation*}
+
+\noindent By definition of the Law of Large Numbers the estimator is strongly consistent.
+\noindent We can choose $\pi(p)$ and $\pi(\theta)$ to be either uniform or gamma distributions. 
+
+\paragraph{Uniform priors} For distributions $\pi(p), \pi(\theta) \sim \mathcal{U}([0,1])$:
+
+\begin{equation*}
+    \pi (p, \theta |z, x) = \frac{\prod_{i=1}^{n}\pi(x_i, z_i | p, \theta) }{\pi(x, z)}
+\end{equation*}
+
+\paragraph{Beta priors}
+
+For distributions $\pi(p) \sim Beta(\alpha_p, \beta_p)$ and $\pi(\theta) \sim Beta(\alpha_{\theta}, \beta_{\theta})$ :
+
+\begin{equation*}
+    \pi (p, \theta |z, x) = \frac{p^{n+1- \alpha_p} (1-p)^{\beta_p+n-1} \theta^{1- \alpha_{\theta}} (1-\theta)^{\beta_{\theta} - 1} \prod_{i=1}^{n}\left[ \theta^{\frac{x_i}{2}}(1- \theta)^{1 - \frac{x_i}{2}} \right]^{z_i}  \left[ \binom{2}{x_i} \theta^{x_i}(1- \theta)^{2 - x_i} \right]^{1-z_i} }{\pi(x, z) \mathbf{B}(\alpha_p, \beta_p) \mathbf{B}(\alpha_{\theta}, \beta_{\theta})}
+\end{equation*}
+
+\subsubsection{Conditional distribution $\pi (z |p, \theta, x^{\text{obs}})$}
+
+\noindent Again, with Bayes' Theorem  : 
+
+\begin{equation*}
+    \pi (z |p, \theta, x) = \frac{\pi(p, \theta | z, x^{\text{obs}}) \pi(z,x^{\text{obs}})} {\pi(p, \theta, x^{\text{obs}})} \\
+    = \frac{\pi(p, \theta | z, x^{\text{obs}}) \pi(z,x^{\text{obs}})} {\pi(x^{\text{obs}}| p, \theta) \pi(p) \pi(\theta)}
+\end{equation*}
+
+\noindent Here $\pi(z,x^{\text{obs}})$ is the marginal distribution and $\pi(x^{\text{obs}}| p, \theta)$ the original distribution of the model evaluated in the observation $x^{\text{obs}}$.
+
+\subsection{Implement a Gibbs sampler to sample from the posterior distribution of $(z,p,\theta)$.}
+\subsection{Compare the empirical posterior distribution of $(p,\theta)$, the marginal distributions of $p$ and $\theta$ as well as their posterior means obtained with Metropolis Hastings scheme and Gibbs sampler. Which algorithm do you recommend to use?}
+
+
+
+\newpage
+\section{ABC algorithm}
+\subsection{Implement a vanilla ABC algorithm (using a L2-standardised distance) to sample from the posterior distribution of $(p,\theta)$. Justify the choice of the summary statistics and study the influence of the size of the neighborhood around $x^{obs}$ on the posterior approximation.}
+
+Denote the observations by $x^{obs}$ with sampling distribution $f(.|p,\theta)$.
+
+\vspace{3mm}
+
+```{r}
+# Simulation from the sampling distribution, knowing the parameters
+sim_obs = function(n_sim, params){
+  p = params[1]
+  theta = params[2]
+  AA = p*(1-theta) + (1-p)*(1-theta)^2 
+  aa = p*theta + (1-p)*theta^2 
+  aA = 2*(1-p)*theta*(1-theta)
+  return(sample(c("AA","aa","aA"), n_sim, replace = T, prob = c(AA, aa, aA)))
+}
+```
+
+Let $\pi(.)$ be the prior on $(p,\theta)$, with independent distribution on $p$ and $\theta$. 
+
+\vspace{3mm}
+
+```{r}
+# Simulation from the prior (uniform case)
+sim_prior_unif = function() 
+  return(runif(2))
+
+# Simulation from the prior (beta case)
+sim_prior_beta = function(a1, b1, a2, b2) 
+  return(c(rbeta(1, a1, b1), rbeta(1, a2, b2)))
+```
+
+Let $S$ denote the summary statistics we will use in the ABC algorithm. Since our data is not quantitative we will not be able to compute moments but we can use a frequency table to compare the distribution of the observed data and the generated data.
+
+\vspace{3mm}
+
+```{r}
+S = function(x)
+  return(c(sum(x == "AA")/length(x), sum(x == "aa")/length(x), sum(x == "aA")/length(x)))
+```
+
+```{r}
+abc = function(n_sim, x_obs, sim_obs, sim_prior, S, neighborhood_size, max_iter = 1e8, ...){
+  accepted = 0
+  refused = 0
+  n_obs = length(x_obs)
+  samples = matrix(rep(0,2*n_sim), ncol = 2)
+  for(i in 1:max_iter){
+    params = sim_prior(...)
+    x = sim_obs(n_obs, params)
+    if (sum((S(x) - S(x_obs))^2) < neighborhood_size){
+      accepted = accepted + 1
+      samples[accepted, ] = params
+    } else refused = refused + 1
+    if (accepted == n_sim) break
+  }
+  samples = as.data.frame(samples)
+  colnames(samples) = c("p","theta")
+  return(list(samples = samples, rate = round(accepted / (accepted + refused), 4)))
+}
+```
+
+```{r echo=FALSE, fig.height=2.2, warning = FALSE}
+abc_res = abc(10000, x_obs, sim_obs, sim_prior_unif, S, 1)
+
+plot_both_samples(abc_res$samples, 
+  title = "Fig. 4.1 : Sampling from posterior with the ABC algorithm (U(0,1) x U(0,1) prior)",
+  subtitle = paste("Size of the neighborhood = 1.0 | Acceptance rate = ", abc_res$rate),
+  plot_gaussian = FALSE)
+```
+
+```{r echo=FALSE, fig.height=2, warning = FALSE}
+abc_res_unif = abc(10000, x_obs, sim_obs, sim_prior_unif, S, 0.001)
+
+plot_both_samples(abc_res_unif$samples, 
+  subtitle = paste("Size of the neighborhood = 0.001 | Acceptance rate = ", abc_res_unif$rate),
+  plot_gaussian = FALSE)
+```
+
+```{r echo=FALSE, fig.height=2, warning = FALSE}
+abc_res = abc(10000, x_obs, sim_obs, sim_prior_beta, S, 1, a1 = 5, b1 = 1, a2 = 2, b2 = 5)
+
+plot_both_samples(abc_res$samples, 
+  title = "Fig. 4.2 : Sampling from posterior with the ABC algorithm (B(5,1) x B(2,5) prior)",
+  subtitle = paste("Size of the neighborhood = 1.0 | Acceptance rate = ", abc_res$rate),
+  plot_gaussian = FALSE)
+```
+
+```{r echo=FALSE, fig.height=2, warning = FALSE}
+abc_res_beta = abc(10000, x_obs, sim_obs, sim_prior_beta, S, 0.001, a1 = 5, b1 = 1, a2 = 2, b2 = 5)
+
+plot_both_samples(abc_res_beta$samples, 
+  subtitle = paste("Size of the neighborhood = 0.001 | Acceptance rate = ", abc_res_beta$rate),
+  plot_gaussian = FALSE)
+```
+
+When the neighborhood around $x^{obs}$ is too large, we can see that we sample from the prior distribution instead of the posterior distribution. When the neighborhood is small enough, the mean and standard deviation seem invariant to the choice of the prior.
+
+We are now going to study the impact of the choice of the prior distribution and its parameters on the acceptance rate. We will use as reference the empirical posterior distribution obtained when $\mathscr{U}[0,1] \times \mathscr{U}[0,1]$ is used as prior.
+
+```{r echo=FALSE}
+KL_prior_vs_ref_posterior = function(ref_posterior, prior, ...){
+  P = prior(ref_posterior$x, ...)
+  Q = ref_posterior$y
+  KL_dist = distance(rbind(P/sum(P), Q/sum(Q)), 
+    method = "kullback-leibler",
+    mute.message = TRUE)
+  return(round(unname(KL_dist),4))
+}
+
+KL_comparison_table = function(param){
+  #hard written constants when prior is B(2,5) x B(5,1) to reduce computation time of the report
+  rate = 1e-4
+  m_p = 0.6459
+  m_theta = 0.3282
+  
+  ref_posterior = density(abc_res_unif$samples[[param]])
+  res = matrix(rep(0,12), ncol = 4)
+
+  res[1,] = c(
+    "U[0,1]",
+    KL_prior_vs_ref_posterior(ref_posterior, dunif), 
+    abc_res_unif$rate,
+    round(mean(abc_res_unif$samples[[param]]),4))
+  
+  res[2,] = c(
+    "B(5,1)",
+    KL_prior_vs_ref_posterior(ref_posterior, dbeta, shape1 = 5, shape2 = 1),
+    abc_res_beta$rate,
+    round(mean(abc_res_beta$samples[[param]]),4))
+  
+  res[3,] = c(
+    "B(2,5)",
+    KL_prior_vs_ref_posterior(ref_posterior, dbeta, shape1 = 2, shape2 = 5), 
+    rate,
+    m_p)
+  
+  if(param == "theta") {
+    res[3,3] = res[2,3]
+    res[2,3] = rate 
+    res[3,4] = res[2,4]
+    res[2,4] = m_theta 
+  }
+  
+  res = as.data.frame(res)
+  colnames(res) = c(
+    paste("Prior of", param), 
+    "Distance to Reference Posterior",
+    "ABC acceptance rate", 
+    paste("Empirical mean of", param))
+  
+  return(res)
+}
+
+kable(KL_comparison_table("p"), digits = 4, caption = "Kullback-Leibler distance between the Prior and Reference Posterior distributions of p")
+
+kable(KL_comparison_table("theta"), digits = 4, caption = "Kullback-Leibler distance between the Prior and Reference Posterior distributions of theta")
+```
+
+In the ABC algorithm, the choice of the prior (or its parameters) has a huge impact on the acceptance rate and consequently on the simulation cost. It seems better to use a uniform prior than to risk having a prior with a distribution tail where the posterior has most of its mass. 
+
+\subsection{Compare the empirical posterior distribution of $(p,\theta)$, the marginal distributions of $p$ and $\theta$ as well as their posterior means to the ones obtained with the previous MCMC schemes.}
+
+In order to compare the different schemes, we will use for each of them the best parameters found in the previous sections.
+
+\vspace{3mm}
+
+```{r echo = FALSE}
+mh_unif_means = colMeans(mh_res_unif$samples)
+abc_unif_means = colMeans(abc_res_unif$samples)
+mh_beta_means = colMeans(mh_res_beta$samples)
+abc_beta_means = colMeans(abc_res_beta$samples)
+
+mean_table = rbind(mh_unif_means, mh_beta_means, abc_unif_means, abc_beta_means)
+
+rownames(mean_table) = c("MH (U[0,1] x U[0,1] prior)",
+                         "MH (B(5,1) x B(2,5) prior)",
+                         "ABC (U[0,1] x U[0,1] prior)",
+                         "ABC (B(5,1) x B(2,5) prior)")
+kable(mean_table, 
+  col.names = c("Empirical mean of p", "Empirical mean of theta"),
+  caption = "Comparison of the schemes")
+
+```
+
+```{r include=FALSE}
+plot_one_comparison = function(data, col_name, shape1, shape2, beta_label){
+
+  data$prior[data$prior == "Beta"] = beta_label
+  LINES = c("U[0,1]" = "solid", "B(2,5)" = "dashed", "B(5,1)" = "dotdash")
+  
+  plt = ggplot(data, 
+      aes (
+        x = !! sym(col_name), 
+        color = scheme,
+        linetype = prior
+      )
+    ) + 
+    geom_density(
+      key_glyph = draw_key_path
+    ) +
+    geom_function(
+      fun = dunif,
+      aes(color = "Prior", linetype = "U[0,1]")
+    ) + 
+    geom_function(
+      fun = dbeta,
+      args = list(shape1 = shape1, shape2 = shape2),
+      aes(color = "Prior", linetype = beta_label)
+    ) + 
+    scale_color_manual(drop = FALSE, values = pal_mix, name = "Distribution : ") +
+    scale_linetype_manual(drop = FALSE, values = LINES, name = "Prior used : ", limits = c("U[0,1]","B(2,5)", "B(5,1)")) +
+    ylab("density") +
+    theme(plot.title = element_text(size=10)) +
+    xlim(0,1) +
+    ggtitle(paste("Empirical posterior distribution of", col_name))
+  return (plt)
+}
+
+plot_both_comparison = function(data, title){
+  plt1 = plot_one_comparison(data, "p", shape1 = 2, shape2 = 5, "B(5,1)")
+  plt2 = plot_one_comparison(data, "theta", shape1 = 5, shape2 = 1, "B(2,5)")
+
+  plt = (plt1 / plt2) +
+    plot_annotation(
+      title = title,
+      theme = theme(
+        plot.title = element_text(size=12)
+      )) +
+    plot_layout(guides = "collect") &
+    theme(
+      legend.position = "bottom",
+      legend.box = "vertical",
+      legend.text = element_text(size=8),
+      legend.title = element_text(size=8),
+      axis.text = element_text(size=8),
+      axis.title = element_text(size=8),
+      axis.title.x = element_blank(),
+    )
+  
+  return(plt)
+}
+
+```
+
+```{r echo = FALSE, fig.height = 7.5}
+mh_res_unif$samples["scheme"] = "Posterior (MH)"
+abc_res_unif$samples["scheme"] = "Posterior (ABC)"
+mh_res_unif$samples["prior"] = "U[0,1]"
+abc_res_unif$samples["prior"] = "U[0,1]"
+
+mh_res_beta$samples["scheme"] = "Posterior (MH)"
+abc_res_beta$samples["scheme"] = "Posterior (ABC)"
+mh_res_beta$samples["prior"] = "Beta"
+abc_res_beta$samples["prior"] = "Beta"
+
+data = rbind(mh_res_unif$samples, abc_res_unif$samples, mh_res_beta$samples, abc_res_beta$samples)
+
+plot_both_comparison(data, "Fig 4.3 : Comparison of the schemes")
+```
+
+
+\subsection{Hardy Weinberg Equilibrium (model $m = 1$) is embedded in the inbreeding model we used (model $m = 2$). We would like to study if it was reasonable to use a more complex model for our data. Using an ABC routine, compute estimates of the posterior probabilities of models 1 and 2, i.e. $\pi(m|x^{obs})$, under the assumption of a uniform prior on model index $m$.  What is your conclusion?}
+
+We sample m with the posterio distribution using the ABC routine. We choose an acceptance rate of 0.05. We end up with a probability close to 1 in favor of the second model. It was reasonable to use a more complex model.
+
+```{r}
+ABC_model_choice<-function(sample_size,obs){
+  n<-length(obs)
+  m_sample<-numeric(sample_size)
+  theta_sample<-numeric(sample_size)
+  p_sample<-numeric(sample_size)
+  for ( t in 1:sample_size){
+    m<-rbinom(1,1,prob=0.5) #we choose a model
+    p<-runif(1) # we choose a uniform prior for p
+    theta<-runif(1) #uniform prior for theta
+    z<-rbinom(n,1,prob=p) #generate z
+    x<-(m==0)*rbinom(n,2,theta)+(m==1)*(z*2*rbinom(n,1,theta)+(1-z)*rbinom(1,2,theta)) #generate 
+    distance<-((length(x[x==1])/n-length(obs[obs==1])/length(obs))^2+(length(x[x==0])/n-length(obs[obs==0])/length(obs))^2+(length(x[x==2])/n-length(obs[obs==2])/length(obs))^2)
+    
+    while(distance>0.05){
+      m<-rbinom(1,1,prob=0.5) #we choose a model
+      p<-runif(1) # we choose a uniform prior for p
+      theta<-runif(1) #uniform prior for theta
+      z<-rbinom(n,1,prob=p) #generate z
+      x<-(m==0)*rbinom(n,2,theta)+(m==1)*(z*2*rbinom(n,1,theta)+(1-z)*rbinom(1,2,theta)) #generate 
+      distance<-((length(x[x==1])/n-length(obs[obs==1])/n)^2+(length(x[x==0])/n-length(obs[obs==0])/n)^2+(length(x[x==2])/n-length(obs[obs==2])/n)^2)
+    }
+    m_sample[t]<-m
+    theta_sample[t]<-theta
+    p_sample[t]<-p
+    
+  }
+  return (data.frame(m=m_sample,theta=theta_sample,p=p_sample))
+  
+}
+
+resultat<-ABC_model_choice(10000,x_obs_EM)
+
+mean(resultat$m)
+
+```
+
